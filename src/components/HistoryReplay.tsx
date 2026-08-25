@@ -125,6 +125,38 @@ export function HistoryReplay({
     }
   }, [owner]);
 
+  /**
+   * Reflect what is on screen in the address bar, without a navigation.
+   *
+   * `replaceState` rather than `pushState`: every step of one visit reading
+   * the same token is a detail of the same look, not a new page to go back
+   * through — a wallet clicked off a board and then closed should return to
+   * the token, not to whatever the tab's history holds two entries back.
+   */
+  function setUrl(target: string, who: string): void {
+    const url = new URL(window.location.href);
+    if (target) url.searchParams.set("mint", target);
+    else url.searchParams.delete("mint");
+    if (who) url.searchParams.set("wallet", who);
+    else url.searchParams.delete("wallet");
+    window.history.replaceState(null, "", url);
+  }
+
+  /**
+   * Open a wallet's replay from an already-loaded token, and say so in the
+   * address bar.
+   *
+   * This is the common way a replay actually gets opened — off the board, not
+   * off the form — so it needs the same URL update `load` gives the form path.
+   * Read from `history.mint` rather than the `mint` input, which is live text
+   * the visitor may have started typing a different token into without
+   * submitting it; the board that is being clicked belongs to `history`.
+   */
+  function openWallet(wallet: string, label?: string): void {
+    setPlaying({ wallet, label });
+    setUrl(history?.mint ?? mint.trim(), wallet);
+  }
+
   const load = useCallback(async function load(
     override?: string,
     walletOverride?: string,
@@ -140,6 +172,16 @@ export function HistoryReplay({
      */
     const who = (walletOverride ?? wallet).trim();
     if (walletOverride) setWallet(walletOverride);
+    /**
+     * What is being watched belongs in the address bar.
+     *
+     * The only way to hand someone a replay used to be the exported video —
+     * the page itself always came back to a bare `/`, so the live chart, the
+     * board and the "still building" state all had exactly one viewer. Set
+     * before the fetch resolves, not after: a link to a token that turns out
+     * not to exist is still a link worth the URL saying what was asked for.
+     */
+    setUrl(target, who);
     setLoading(true);
     setHistory(null);
     setBoard(null);
@@ -190,6 +232,27 @@ export function HistoryReplay({
       void fetchBuiltTokens().then(setBuilt);
     }
   }, [mint, wallet]);
+
+  /**
+   * A link opens on what it links to.
+   *
+   * Read once, on mount, from whatever the page was actually loaded with.
+   * `mint` and `wallet` are set by `load` itself, the same way a form submit
+   * sets them. Deferred a tick rather than called straight from the effect
+   * body, the same way the poll below only ever calls `load` from inside a
+   * timer callback — `load` sets state synchronously the moment it starts,
+   * and doing that as the direct, immediate result of an effect running is
+   * what React's own lint rule is warning a mount effect never to do.
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linkedMint = params.get("mint")?.trim();
+    if (!linkedMint) return;
+    const linkedWallet = params.get("wallet")?.trim() ?? undefined;
+    const timer = setTimeout(() => void load(linkedMint, linkedWallet), 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * While something is queued, ask every few seconds and reload when it lands.
@@ -281,6 +344,7 @@ export function HistoryReplay({
     // Or the poll keeps running for a token nobody is looking at any more,
     // and lands its replay on top of the gallery when it finishes.
     setWaiting(null);
+    setUrl("", "");
   }
 
   return (
@@ -334,7 +398,12 @@ export function HistoryReplay({
           /** The wallet typed into the form was already fetched with the chart;
            *  opening its replay should not fetch the same thing again. */
           preloaded={history.wallet === playing.wallet ? history : undefined}
-          onClose={() => setPlaying(null)}
+          onClose={() => {
+            setPlaying(null);
+            // Back to the token, not to a bare `/` — the chart and board it
+            // belongs to are still on screen.
+            setUrl(history.mint, "");
+          }}
         />
       )}
 
@@ -768,10 +837,7 @@ export function HistoryReplay({
                 <button
                   type="button"
                   onClick={() =>
-                    setPlaying({
-                      wallet: history.wallet!,
-                      label: history.walletName,
-                    })
+                    openWallet(history.wallet!, history.walletName)
                   }
                   className="cursor-pointer rounded-xs border border-amber/40 bg-amber/10 px-3 py-1.5 font-mono text-[10px] tracking-[0.12em] text-amber uppercase hover:bg-amber/20"
                 >
@@ -884,7 +950,7 @@ export function HistoryReplay({
                 {isAddress(query.trim()) && (
                   <button
                     type="button"
-                    onClick={() => setPlaying({ wallet: query.trim() })}
+                    onClick={() => openWallet(query.trim())}
                     className="cursor-pointer rounded-xs border border-amber/40 bg-amber/10 px-2.5 py-1 font-mono text-[10px] tracking-[0.12em] text-amber uppercase"
                   >
                     replay it anyway
@@ -901,7 +967,7 @@ export function HistoryReplay({
               loading={ranking}
               missing={Boolean(board?.error)}
               tone="mint"
-              onPlay={(w, n) => setPlaying({ wallet: w, label: n })}
+              onPlay={(w, n) => openWallet(w, n)}
             />
             <Board
               title="Lost the most"
@@ -909,7 +975,7 @@ export function HistoryReplay({
               loading={ranking}
               missing={Boolean(board?.error)}
               tone="signal"
-              onPlay={(w, n) => setPlaying({ wallet: w, label: n })}
+              onPlay={(w, n) => openWallet(w, n)}
             />
           </div>
           {board?.truncated && (
