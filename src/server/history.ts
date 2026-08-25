@@ -2718,35 +2718,38 @@ async function prebuildReplays(
       LEAD_SEC,
       stillOpen(seen.held, seen.everHeld),
     );
-    const key = `${w.interval}`;
-    const held = charts.get(key);
+    /**
+     * Checked against every chart already open at this bar width, not just
+     * the first one drawn.
+     *
+     * A single `charts.get(interval)` slot meant a THIRD window at a shared
+     * width could only ever be compared against the first — a window that
+     * overlapped the second instead, but not the first, silently opened a
+     * third chart rather than joining the second. Scanning every entry at
+     * this width is what actually finds the one it overlaps.
+     *
+     * Only widened where it actually overlaps — and only while the result is
+     * still a chart worth drawing.
+     *
+     * The bar-count test matters now that a replay can be 15m wide: merging
+     * two overlapping month-long windows at that width is four thousand bars
+     * of a busy token, and `series` holds every response of a sweep at once.
+     * Refusing the merge costs one extra chart; taking it costs the build.
+     */
+    const held = [...charts.values()].find(
+      (c) =>
+        c.interval === w.interval &&
+        w.from <= c.to &&
+        w.to >= c.from &&
+        (Math.max(c.to, w.to) - Math.min(c.from, w.from)) / w.interval <=
+          REPLAY_MAX_BARS,
+    );
     if (held) {
-      /**
-       * Only widened where it actually overlaps — and only while the result is
-       * still a chart worth drawing.
-       *
-       * The bar-count test matters now that a replay can be 15m wide: merging
-       * two overlapping month-long windows at that width is four thousand bars
-       * of a busy token, and `series` holds every response of a sweep at once.
-       * Refusing the merge costs one extra chart; taking it costs the build.
-       */
-      const merged = {
-        from: Math.min(held.from, w.from),
-        to: Math.max(held.to, w.to),
-      };
-      if (
-        w.from <= held.to &&
-        w.to >= held.from &&
-        (merged.to - merged.from) / w.interval <= REPLAY_MAX_BARS
-      ) {
-        held.from = merged.from;
-        held.to = merged.to;
-        continue;
-      }
-      charts.set(`${key}:${w.from}`, w);
+      held.from = Math.min(held.from, w.from);
+      held.to = Math.max(held.to, w.to);
       continue;
     }
-    charts.set(key, w);
+    charts.set(`${w.interval}:${w.from}`, w);
   }
 
   const before = spentSoFar();
