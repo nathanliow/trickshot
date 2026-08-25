@@ -16,7 +16,6 @@ import {
   OWNER_LIMITS,
   reconstruct,
   replayFrom,
-  type ReplayLimits,
   TooLarge,
   VISITOR_LIMITS,
   walletReplay,
@@ -189,7 +188,7 @@ async function handle(request: Request) {
           wallet,
           lead,
           alongside,
-          isOwner ? OWNER_LIMITS : limited ? CLOSED_LIMITS : VISITOR_LIMITS,
+          isOwner ? OWNER_LIMITS : VISITOR_LIMITS,
           section,
         );
       } finally {
@@ -268,17 +267,24 @@ async function handle(request: Request) {
        * off its own trader board — and being told the token is not indexed, on
        * a page that only exists because it is, reads as a bug in the site.
        */
-      /**
-       * Queueing it would be a promise the worker cannot keep.
-       *
-       * The cron checks the same ceiling before it builds anything, so a job
-       * added now sits until tomorrow while the page says "building now" —
-       * and the queue has a depth cap that this would fill with work nobody
-       * is going to do tonight.
-       */
-      if (limited) return closedForToday();
-
       const known = await coverageOf(mint);
+
+      /**
+       * The day's limit stops NEW TOKENS, not replays.
+       *
+       * A token already on the site is a replay however the request lands
+       * here, including the common case that brought this back: a wallet's
+       * bars come from the WALLET's span, so clicking a name off a token's
+       * own board routinely wants a rung that token has never been built at.
+       * Refusing that read "could not draw this replay" on a page that only
+       * exists because the token is indexed — a limit on indexing, reported
+       * as the replay being broken.
+       *
+       * A mint the site has never seen is the thing being held back, and it
+       * is held back here as well as at the entry check, because a window
+       * that turns out too large arrives at this branch instead.
+       */
+      if (limited && !known) return closedForToday();
       const queued = await enqueue(mint, {
         credits: estimate.credits,
         seconds: estimate.seconds,
@@ -294,10 +300,14 @@ async function handle(request: Request) {
         {
           error: !queued.accepted
             ? "this needs building and the queue is full — try again shortly"
-            : known
+            : limited
               ? "this wallet traded over a different span than the token's own " +
-                "chart covers, so its bars are being built now"
-              : "this token has not been indexed yet — it is queued now",
+                "chart covers, and the day's build limit is reached — its bars " +
+                "are queued for tomorrow"
+              : known
+                ? "this wallet traded over a different span than the token's own " +
+                  "chart covers, so its bars are being built now"
+                : "this token has not been indexed yet — it is queued now",
           queued: queued.accepted,
           status: queued.job.status,
           ahead: queued.ahead,
@@ -310,7 +320,7 @@ async function handle(request: Request) {
 
     // Only reachable if the estimate was wrong; the ceiling is the backstop.
     if (error instanceof BudgetExceeded) {
-      if (limited) return closedForToday();
+      if (limited && !(await coverageOf(mint))) return closedForToday();
       const queued = await enqueue(mint);
       return NextResponse.json(
         {
@@ -330,20 +340,6 @@ async function handle(request: Request) {
     );
   }
 }
-
-/**
- * What a visitor may do once the site’s day is spent.
- *
- * Not zero credits — replaying a wallet on a window that is already stored
- * still has to read that wallet’s own trades, and refusing that would take
- * the whole site down to defend a ceiling it is not spending against. Zero
- * BARS is the actual rule: read what exists, build nothing.
- *
- * `buildBars: 0` is enforced before the estimator runs (`history.ts`, the
- * `missing > limits.buildBars` throw), so a window needing bars costs nothing
- * to refuse — not even the signature count that pricing it would take.
- */
-const CLOSED_LIMITS: ReplayLimits = { ...VISITOR_LIMITS, buildBars: 0 };
 
 /**
  * The one refusal every site-wide ceiling ends at.

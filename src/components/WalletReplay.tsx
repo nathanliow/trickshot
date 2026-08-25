@@ -1261,7 +1261,8 @@ export function WalletReplay({
           paint(ctx, {
             layout,
             shot: a.chart.takeScreenshot(),
-            ticker,
+            // TEMP: ticker hidden in the export. Restore `ticker,` to bring it back.
+            ticker: undefined,
             label,
             wallet,
             asCap,
