@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { owner, readOnly } from "@/server/config";
+import { hasKey, NoKey, owner, readOnly } from "@/server/config";
+import { keyFrom, withKey } from "@/server/key";
 import { identify, tokenIdentity } from "@/server/identity";
 import { tokenRow } from "@/server/store";
 import { buildsLeft, callerIp, siteLimit } from "@/server/budget";
@@ -36,8 +37,10 @@ const MAX_ROWS = Number(process.env.WALLET_MAX_ROWS ?? 50);
 const MAX_ENRICH = Number(process.env.WALLET_MAX_ENRICH ?? 10);
 
 export async function GET(request: Request) {
-  // Billed to the caller, like every other path that can spend.
-  return withCaller(callerIp(request), () => handle(request));
+  // Billed to the caller, and spent on their key when they brought one.
+  return withKey(keyFrom(request), () =>
+    withCaller(callerIp(request), () => handle(request)),
+  );
 }
 
 async function handle(request: Request) {
@@ -50,6 +53,17 @@ async function handle(request: Request) {
   const pages = Number(params.get("pages") ?? 0) || undefined;
   /** Airdrops are hidden by default; `?spam=1` shows the whole tail. */
   const withSpam = params.get("spam") === "1";
+
+  // Enumeration is cheap but not free: a DAS call per page and a probe per row.
+  if (!hasKey()) {
+    return NextResponse.json(
+      {
+        error: "this site has no Helius key of its own — add yours to look up a wallet",
+        needsKey: true,
+      },
+      { status: 428 },
+    );
+  }
 
   try {
     const { mints, truncated, scanned } = await tradedMints(wallet, { pages });
@@ -173,6 +187,15 @@ async function handle(request: Request) {
       }),
     });
   } catch (error) {
+    if (error instanceof NoKey) {
+      return NextResponse.json(
+        {
+          error: "this site has no Helius key of its own — add yours to look up a wallet",
+          needsKey: true,
+        },
+        { status: 428 },
+      );
+    }
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }

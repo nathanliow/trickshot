@@ -13,6 +13,8 @@
  * exists to catch. Postgres adds and returns in one statement, so it does.
  */
 
+import { isByok } from "./key";
+
 const TABLE_RPC = "trickshot_bump";
 
 function supabase(): { url: string; key: string } | null {
@@ -102,6 +104,12 @@ const today = () => new Date().toISOString().slice(0, 10);
  */
 export async function recordSpend(credits: number, ip?: string | null): Promise<void> {
   if (credits <= 0) return;
+  /**
+   * Not the site's to count. `siteLimit` closes the day on this counter, so
+   * counting BYOK spend would shut indexing down for everyone without a key,
+   * over credits the operator never paid for.
+   */
+  if (isByok()) return;
   const n = Math.round(credits);
   if (DAILY_CREDITS > 0) await bump(`spend:${today()}`, n, 36 * 3_600);
   // Attributed as well as totalled, so one visitor cannot quietly account for
@@ -256,6 +264,14 @@ export async function mayBuild(
   wallet?: string,
 ): Promise<Allowance> {
   if (buildsDisabled()) return { ok: false, reason: "disabled" };
+
+  /**
+   * A visitor on their own key skips every money limit below, since all of them
+   * protect the site's account and this request cannot touch it. The kill switch
+   * above still applies, and the caller still takes a concurrency slot.
+   */
+  if (isByok()) return { ok: true };
+
   if (!(await withinDailyBudget())) return { ok: false, reason: "budget" };
   if (!(await withinVisitorBudget(ip))) return { ok: false, reason: "ip" };
 

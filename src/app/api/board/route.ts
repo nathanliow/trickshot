@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { owner } from "@/server/config";
+import { keyFrom, withKey } from "@/server/key";
 import { traderBoard } from "@/server/history";
 
 /**
@@ -18,6 +19,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
+  return withKey(keyFrom(request), () => handle(request));
+}
+
+async function handle(request: Request) {
   const params = new URL(request.url).searchParams;
   const mint = params.get("mint")?.trim() ?? "";
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
@@ -36,6 +41,13 @@ export async function GET(request: Request) {
    * `update` is the same hazard with a shorter fuse — it SKIPS the cached fast
    * path outright, so it reaches the minutes-long branch however the build is
    * gated. The two travel together: no permission to build, no update.
+   */
+  /**
+   * Still owner-only with a visitor's key. BYOK answers the money objection to
+   * building a board, not the other one: ~80 seconds and two hundred wallets
+   * inside one function, for something everyone then shares.
+   *
+   * The key is still used here to re-mark the cached board to spot.
    */
   const mayBuild = owner(request);
 

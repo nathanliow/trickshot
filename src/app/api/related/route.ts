@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { owner } from "@/server/config";
+import { keyFrom, withKey } from "@/server/key";
 import { relatedWallets } from "@/server/history";
 
 /**
@@ -18,6 +19,10 @@ export const maxDuration = 300;
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 export async function GET(request: Request) {
+  return withKey(keyFrom(request), () => handle(request));
+}
+
+async function handle(request: Request) {
   const params = new URL(request.url).searchParams;
   const mint = params.get("mint")?.trim() ?? "";
   const wallet = params.get("wallet")?.trim() ?? "";

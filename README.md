@@ -95,6 +95,33 @@ Vercel Pro plan.
 
 `/api/usage` reports the day against those limits. Owner-only.
 
+## Letting visitors bring their own key
+
+Every limit in that table protects one Helius account — yours. A visitor
+spending their own is not touching it, so none of them applies to that request
+and none of its spend is counted: someone grinding a hundred cold builds on
+their own key cannot close the site for anybody else.
+
+The key lives in their browser, `localStorage` or `sessionStorage` as they
+choose, and travels as an `X-Helius-Key` header — never a query parameter,
+which would put a paid credential into access logs, browser history and every
+`Referer` the page sends. It is spent for that one request and not stored.
+
+Three things a visitor key does not buy: `MAX_CONCURRENT_BUILDS` and
+`TRICKSHOT_DISABLE_BUILDS` still hold, because they bound function time rather
+than money, and a trader board is still owner-only — eighty seconds and two
+hundred wallets read in full, for an artefact everyone then shares.
+
+What makes this worth having rather than a way to move a bill around is the
+cache. Replaying something already indexed makes no build calls at all, so a
+visitor's key is only ever spent on bars nobody has drawn — and what it draws
+is kept for whoever asks next.
+
+`TRICKSHOT_DISABLE_BYOK=1` turns it off. Worth setting on a read-only
+deployment, where a BYOK build cannot be persisted and is rebuilt every time.
+With no `HELIUS_API_KEY` at all the site is purely BYOK: the gallery still
+renders from cache and anything else asks for a key.
+
 ## What is in scripts/migrate.sql
 
 Sections 1 and 2 are additive and safe to run against a live database — every

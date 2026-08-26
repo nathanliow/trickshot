@@ -1,7 +1,8 @@
+import { byokAllowed, readOnly } from "@/server/config";
+
 import { HistoryReplay } from "@/components/HistoryReplay";
-import { siteLimit } from "@/server/budget";
-import { readOnly } from "@/server/config";
 import { replayable } from "@/server/history";
+import { siteLimit } from "@/server/budget";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,12 @@ export default async function TrickshotPage() {
         initialTokens={tokens}
         readOnly={readOnly()}
         limited={limit !== null}
+        /**
+         * Whether to offer BYOK at all. Read on the server because only the
+         * server knows — a control that stores a key the API will then ignore
+         * is worse than no control.
+         */
+        byok={byokAllowed()}
       />
     </div>
   );
