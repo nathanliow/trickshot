@@ -1,3 +1,5 @@
+import { keyHeaders } from "./key";
+
 /**
  * A wallet's position in one token, minute by minute.
  *
@@ -129,6 +131,19 @@ export async function fetchJob(mint: string): Promise<JobState | null> {
   }
 }
 
+/**
+ * Every request to this app's API, with the visitor's key attached when there
+ * is one.
+ *
+ * Funnelled through one function rather than added at each call site, for the
+ * same reason the server reads the key from one getter: there are five of these
+ * and a sixth added later must not be the one that silently spends the site's
+ * key instead of the visitor's.
+ */
+async function api(path: string): Promise<Response> {
+  return fetch(path, { cache: "no-store", headers: keyHeaders() });
+}
+
 export interface TokenHistory {
   mint: string;
   name?: string;
@@ -186,6 +201,12 @@ export interface TokenHistory {
    * once a day.
    */
   limited?: boolean;
+  /**
+   * There is no Helius key to spend — the site has none and neither did this
+   * request. The page opens the key dialog rather than showing an error, since
+   * "add your key" is a thing the visitor can actually do about it.
+   */
+  needsKey?: boolean;
 }
 
 /** Who made and lost the most. Fetched separately; see `/api/board`. */
@@ -224,7 +245,7 @@ export async function fetchHistory(
     query.set("zoomFrom", String(section.from));
     query.set("zoomTo", String(section.to));
   }
-  const res = await fetch(`/api/history?${query}`, { cache: "no-store" });
+  const res = await api(`/api/history?${query}`);
   const body = (await res.json()) as TokenHistory;
   if (!res.ok) return { ...body, error: body.error ?? `error ${res.status}` };
   return body;
@@ -244,7 +265,7 @@ export async function fetchBoard(
 ): Promise<TraderBoard | null> {
   const query = new URLSearchParams({ mint });
   if (update) query.set("update", "1");
-  const res = await fetch(`/api/board?${query}`, { cache: "no-store" });
+  const res = await api(`/api/board?${query}`);
   const body = (await res.json()) as TraderBoard;
   if (!res.ok) return { ...body, error: body.error ?? `error ${res.status}` };
   return body;
@@ -272,7 +293,7 @@ export interface BuiltToken {
  */
 export async function fetchBuiltTokens(): Promise<BuiltToken[]> {
   try {
-    const res = await fetch("/api/tokens", { cache: "no-store" });
+    const res = await api("/api/tokens");
     if (!res.ok) return [];
     return ((await res.json()) as { tokens?: BuiltToken[] }).tokens ?? [];
   } catch {
@@ -316,6 +337,8 @@ export interface WalletTokens {
   tokens: WalletToken[];
   /** Nothing here can be built today; rows that are ready still replay. */
   limited?: boolean;
+  /** No key to spend — the page opens the key dialog. See `TokenHistory`. */
+  needsKey?: boolean;
   error?: string;
 }
 
@@ -341,7 +364,7 @@ export async function fetchWalletTokens(
   const query = new URLSearchParams({ address });
   if (pages) query.set("pages", String(pages));
   if (spam) query.set("spam", "1");
-  const res = await fetch(`/api/wallet?${query}`, { cache: "no-store" });
+  const res = await api(`/api/wallet?${query}`);
   const body = (await res.json()) as WalletTokens;
   if (!res.ok) return { ...body, error: body.error ?? `error ${res.status}` };
   return body;
@@ -388,7 +411,7 @@ export async function fetchRelated(
   wallet: string,
 ): Promise<RelatedReport | null> {
   const query = new URLSearchParams({ mint, wallet });
-  const res = await fetch(`/api/related?${query}`, { cache: "no-store" });
+  const res = await api(`/api/related?${query}`);
   const body = (await res.json()) as RelatedReport;
   if (!res.ok) return { ...body, error: body.error ?? `error ${res.status}` };
   return body;

@@ -2350,6 +2350,20 @@ export const VISITOR_LIMITS: ReplayLimits = {
 };
 
 /**
+ * What a visitor spending their own key may do.
+ *
+ * Unbounded on credits, since the ceiling it replaces protects an account this
+ * request cannot touch. The rest still bound what one function holds at once,
+ * which a key does not buy more of.
+ */
+export const BYOK_LIMITS: ReplayLimits = {
+  pages: Number(process.env.BYOK_WALLET_PAGES ?? WALLET_PAGES),
+  cluster: Number(process.env.BYOK_CLUSTER ?? 8),
+  buildBars: Number(process.env.BYOK_MAX_BARS ?? 1_000),
+  credits: Number.POSITIVE_INFINITY,
+};
+
+/**
  * Thrown when a request is refused for being too large, not for failing.
  *
  * Carries the estimate, because "no" on its own is a dead end: the caller

@@ -11,7 +11,10 @@ import {
 } from "@/server/budget";
 import { BudgetExceeded, withCaller } from "@/server/meter";
 import { enqueue } from "@/server/queue";
+import { keyFrom, withKey } from "@/server/key";
+import { hasKey, NoKey } from "@/server/config";
 import {
+  BYOK_LIMITS,
   coverageOf,
   OWNER_LIMITS,
   reconstruct,
@@ -39,8 +42,13 @@ export async function GET(request: Request) {
    *
    * Set once, here, rather than passed down: the spending happens five layers
    * in, and a parameter threaded that far is one a future call site forgets.
+   *
+   * The key scope wraps the same way and for the same reason: `config.rpcUrl`
+   * reads it from ten modules, none of which takes a key parameter.
    */
-  return withCaller(callerIp(request), () => handle(request));
+  return withKey(keyFrom(request), () =>
+    withCaller(callerIp(request), () => handle(request)),
+  );
 }
 
 async function handle(request: Request) {
@@ -93,14 +101,35 @@ async function handle(request: Request) {
    */
   const isOwner = owner(request);
   /**
+   * Not the same question as `isOwner`. An owner has authority over the site;
+   * a BYOK visitor has none, they are simply not spending the site's money.
+   */
+  const byok = keyFrom(request) !== null;
+
+  // Checked up front so the reply is "add a key" rather than whatever `NoKey`
+  // surfaces as from five layers down.
+  if (!hasKey()) {
+    return NextResponse.json(
+      {
+        error: "this site has no Helius key of its own — add yours to replay anything",
+        needsKey: true,
+      },
+      { status: 428 },
+    );
+  }
+
+  /**
    * Read once per request, not per decision.
    *
    * Four places below need to know whether the day is spent, and each one is
    * a counter read against Supabase. Asking once and passing the answer down
    * keeps a closed day cheap — which matters, because a closed day is exactly
    * when the site is getting the most requests it cannot serve.
+   *
+   * Null for a BYOK request as well as for the owner: the day's ceilings count
+   * the site's spend, and this request adds nothing to it.
    */
-  const limited = isOwner ? null : await siteLimit();
+  const limited = isOwner || byok ? null : await siteLimit();
 
   const coverage = await coverageOf(mint);
   if (!wallet && coverage !== "full" && !isOwner) {
@@ -135,6 +164,9 @@ async function handle(request: Request) {
        */
       const willBuild = !isOwner && (await coverageOf(mint)) === null;
       let slot = false;
+      // A BYOK visitor skips the counters (see `isByok` in `mayBuild`) but still
+      // takes a slot: three cold builds at once is three functions holding tens
+      // of megabytes, whoever paid for them.
       /**
        * Nothing new gets built once the day is spent — refused HERE, before
        * the wallet's own history is read, because reading it is the first
@@ -188,7 +220,7 @@ async function handle(request: Request) {
           wallet,
           lead,
           alongside,
-          isOwner ? OWNER_LIMITS : VISITOR_LIMITS,
+          isOwner ? OWNER_LIMITS : byok ? BYOK_LIMITS : VISITOR_LIMITS,
           section,
         );
       } finally {
@@ -315,6 +347,17 @@ async function handle(request: Request) {
           buildSeconds: estimate.seconds,
         },
         { status: 413 },
+      );
+    }
+
+    // Same 428 rather than a 500, for a path that reached a call site anyway.
+    if (error instanceof NoKey) {
+      return NextResponse.json(
+        {
+          error: "this site has no Helius key of its own — add yours to replay anything",
+          needsKey: true,
+        },
+        { status: 428 },
       );
     }
 

@@ -1,3 +1,5 @@
+import { visitorKey } from "./key";
+
 /**
  * Everything this app needs from the environment, which is one key.
  *
@@ -6,10 +8,41 @@
  * from. The key is read lazily rather than at module load so that importing
  * this from a route that never calls it cannot break the build.
  */
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing required env var ${name}`);
-  return value;
+/**
+ * Thrown when there is no key to spend at all.
+ *
+ * Its own type so the routes can answer "add your key" rather than
+ * "something went wrong".
+ */
+export class NoKey extends Error {
+  constructor() {
+    super("this request needs a Helius key");
+    this.name = "NoKey";
+  }
+}
+
+/**
+ * The visitor's key if they brought one, otherwise the server's own.
+ *
+ * Theirs takes precedence: they entered it to escape the visitor limits, and
+ * preferring the server's would ignore it wherever one is configured.
+ */
+function heliusKey(): string {
+  const mine = visitorKey();
+  if (mine) return mine;
+  const server = process.env.HELIUS_API_KEY;
+  if (!server) throw new NoKey();
+  return server;
+}
+
+/** Whether anything at all can be spent — a server key, or a visitor's. */
+export function hasKey(): boolean {
+  return visitorKey() !== null || Boolean(process.env.HELIUS_API_KEY);
+}
+
+/** Whether this install has a key of its own, i.e. can serve without BYOK. */
+export function hasServerKey(): boolean {
+  return Boolean(process.env.HELIUS_API_KEY);
 }
 
 /**
@@ -25,14 +58,33 @@ export function readOnly(): boolean {
   return process.env.TRICKSHOT_READONLY === "1";
 }
 
+/**
+ * Whether a visitor may spend their own key on this deployment.
+ *
+ * On by default. Worth turning off on a read-only install, where the build
+ * cannot be persisted and is rebuilt for every visitor who asks.
+ */
+export function byokAllowed(): boolean {
+  return process.env.TRICKSHOT_DISABLE_BYOK !== "1";
+}
+
 export const config = {
   /** The raw key, for the REST endpoints that are not JSON-RPC. */
   get apiKey(): string {
-    return required("HELIUS_API_KEY");
+    return heliusKey();
   },
+  /**
+   * Read as a GETTER on every call, which is what makes BYOK work at all.
+   *
+   * Ten fetch sites across seven modules build their URL from this, and none of
+   * them knows whose key it is — so a per-request key needs nothing more than
+   * this property consulting the active scope. Hoisting it to a module constant
+   * would bind the server's key at import time and silently ignore every
+   * visitor's.
+   */
   get rpcUrl(): string {
     const base = process.env.HELIUS_RPC_URL ?? "https://mainnet.helius-rpc.com";
-    return `${base}/?api-key=${required("HELIUS_API_KEY")}`;
+    return `${base}/?api-key=${heliusKey()}`;
   },
   commitment: (process.env.COMMITMENT ?? "confirmed") as
     | "processed"
